@@ -19,6 +19,10 @@ function parseOrders() {
     return fetch(trackingDetailsLink);
   }
 
+  function trim(str: string) {
+    return str.replace(/^\s+\$*|\s+$/g, '');
+  }
+
   const orderIds = Array.from(
     document.querySelectorAll('.yohtmlc-order-id span:nth-child(2)')
   ).map((e) => (e as HTMLElement).innerText);
@@ -62,33 +66,28 @@ function parseOrders() {
       response.text().then((responseBody) => {
         const doc = new DOMParser().parseFromString(responseBody, 'text/html');
 
-        const productTitleElement = doc.querySelectorAll(
-          '.shipment .a-link-normal'
-        )[1];
-        const productTitle =
-          (productTitleElement as HTMLElement)?.innerText || '';
-
-        // trim whitespace and newlines from ends
-        const productTitleTrimmed = productTitle.replace(/^\s+|\s+$/g, '');
-
-        const productLink = productTitleElement?.getAttribute('href') || '';
+        const items = doc.querySelectorAll('.a-fixed-left-grid');
 
         const trackingLink =
           doc.querySelector('.track-package-button a')?.getAttribute('href') ||
           '';
 
-        const asin = productLink?.split('/')[3];
+        const itemNumbers = items.length;
 
         const subTotals = (doc.querySelector('#od-subtotals') as HTMLElement)
           .innerText;
 
-        let totalOwed = '';
+        let shipping = '';
         if (subTotals) {
-          const matches = subTotals.match(/Grand Total:\s*(\$|USD)\s*(.*)/);
+          const matches = subTotals.match(
+            /Shipping & Handling:\s*(\$|USD)\s*(.*)/
+          );
           if (matches && matches[2]) {
-            totalOwed = matches[2];
+            shipping = matches[2];
           }
         }
+
+        const shippingPer = (parseFloat(shipping) * 100) / itemNumbers / 100;
 
         const orderDateMatches = (
           doc.querySelector('.order-date-invoice-item') as HTMLElement
@@ -106,78 +105,105 @@ function parseOrders() {
           ) as HTMLElement
         ).innerText.includes('POLARIS');
 
-        const orderDetails: Record<Header, any> = {
-          Website: 'zzAmazon.com',
-          'Order ID': orderId,
-          'Order Date': orderDateISO,
-          'Purchase Order Number': 'zzNot Applicable',
-          Currency: 'USD',
-          'Unit Price': totalOwed,
-          'Unit Price Tax': 'zztax',
-          'Shipping Charge': 'zz0',
-          'Total Discounts': 'zz0',
-          'Total Owed': totalOwed,
-          'Shipment Item Subtotal': totalOwed,
-          'Shipment Item Subtotal Tax': 'zztax',
-          ASIN: asin,
-          'Product Condition': 'condition',
-          Quantity: '1',
-          'Payment Instrument Type': 'zzVisa',
-          'Order Status': 'zzFor sale',
-          'Shipment Status': 'zzShipped',
-          'Ship Date': 'zzshipdate',
-          'Shipping Option': 'zzStandard',
-          'Shipping Address': isEasyBookPrep ? 'POLARIS' : 'Little Owl',
-          'Billing Address': 'zzaddress',
-          'Carrier Name & Tracking Number': 'zz',
-          'Product Name': `"${productTitleTrimmed}"`,
-          'Gift Message': 'zz',
-          'Gift Sender Name': 'zz',
-          'Gift Recipient Contact Details': 'zz',
-          Vendor: 'vendor'
-        };
+        Array.from(items).forEach((item) => {
+          const productTitleElement =
+            item.querySelectorAll('.a-link-normal')[1];
+          const productTitle =
+            (productTitleElement as HTMLElement)?.innerText || '';
 
-        getInvoiceDetails(orderId).then((invResponse) => {
-          invResponse.text().then((invResponseBody) => {
-            const conditionMatches =
-              invResponseBody.match(/Condition:\s*(.*)</);
-            const condition = conditionMatches ? conditionMatches[1] : '';
+          const price = parseFloat(
+            trim(
+              (item.querySelector('.a-color-price') as HTMLElement)?.innerText
+            ) || '0'
+          );
 
-            const vendorMatches = invResponseBody.match(/Sold by:\s*(.*)\s*\(/);
-            const vendor = vendorMatches ? vendorMatches[1] : '';
+          const priceCents = Math.floor(price * 100);
+          const shippingCents = Math.floor(shippingPer * 100);
 
-            orderDetails['Product Condition'] = condition;
-            orderDetails['Vendor'] = `"${vendor}"`;
+          const totalOwed = (priceCents + shippingCents) / 100;
 
-            getTrackingInfo(trackingLink).then((trackingInfoResponse) => {
-              trackingInfoResponse.text().then((trackingInfoResponseBody) => {
-                const trackingInfoDoc = new DOMParser().parseFromString(
-                  trackingInfoResponseBody,
-                  'text/html'
-                );
+          // trim whitespace and newlines from ends
+          const productTitleTrimmed = productTitle.replace(/^\s+|\s+$/g, '');
 
-                const trackingNumber =
-                  (
-                    trackingInfoDoc.querySelector(
-                      '.pt-delivery-card-trackingId'
-                    ) as HTMLElement
-                  )?.innerText ?? '';
+          const productLink = productTitleElement?.getAttribute('href') || '';
 
-                const trackingNumberOnly =
-                  trackingNumber.match(/Tracking ID: (.*)/);
+          const asin = productLink?.split('/')[3];
 
-                orderDetails['Carrier Name & Tracking Number'] =
-                  trackingNumberOnly?.[1] ?? '';
+          const orderDetails: Record<Header, any> = {
+            Website: 'zzAmazon.com',
+            'Order ID': orderId,
+            'Order Date': orderDateISO,
+            'Purchase Order Number': 'zzNot Applicable',
+            Currency: 'USD',
+            'Unit Price': totalOwed,
+            'Unit Price Tax': 'zztax',
+            'Shipping Charge': 'zz0',
+            'Total Discounts': 'zz0',
+            'Total Owed': totalOwed,
+            'Shipment Item Subtotal': totalOwed,
+            'Shipment Item Subtotal Tax': 'zztax',
+            ASIN: asin,
+            'Product Condition': 'condition',
+            Quantity: '1',
+            'Payment Instrument Type': 'zzVisa',
+            'Order Status': 'zzFor sale',
+            'Shipment Status': 'zzShipped',
+            'Ship Date': 'zzshipdate',
+            'Shipping Option': 'zzStandard',
+            'Shipping Address': isEasyBookPrep ? 'POLARIS' : 'Little Owl',
+            'Billing Address': 'zzaddress',
+            'Carrier Name & Tracking Number': 'zz',
+            'Product Name': `"${productTitleTrimmed}"`,
+            'Gift Message': 'zz',
+            'Gift Sender Name': 'zz',
+            'Gift Recipient Contact Details': 'zz',
+            Vendor: 'vendor'
+          };
 
-                // print as csv
-                csvString +=
-                  headers.map((key) => orderDetails[key as Header]).join(',') +
-                  '\n';
-                // console.log(
-                //   headers.map((key) => orderDetails[key as Header]).join(',') + '\n'
-                // );
+          getInvoiceDetails(orderId).then((invResponse) => {
+            invResponse.text().then((invResponseBody) => {
+              const conditionMatches =
+                invResponseBody.match(/Condition:\s*(.*)</);
+              const condition = conditionMatches ? conditionMatches[1] : '';
 
-                console.log(csvString);
+              const vendorMatches =
+                invResponseBody.match(/Sold by:\s*(.*)\s*\(/);
+              const vendor = vendorMatches ? vendorMatches[1] : '';
+
+              orderDetails['Product Condition'] = condition;
+              orderDetails['Vendor'] = `"${trim(vendor)}"`;
+
+              getTrackingInfo(trackingLink).then((trackingInfoResponse) => {
+                trackingInfoResponse.text().then((trackingInfoResponseBody) => {
+                  const trackingInfoDoc = new DOMParser().parseFromString(
+                    trackingInfoResponseBody,
+                    'text/html'
+                  );
+
+                  const trackingNumber =
+                    (
+                      trackingInfoDoc.querySelector(
+                        '.pt-delivery-card-trackingId'
+                      ) as HTMLElement
+                    )?.innerText ?? '';
+
+                  const trackingNumberOnly =
+                    trackingNumber.match(/Tracking ID: (.*)/);
+
+                  orderDetails['Carrier Name & Tracking Number'] =
+                    trackingNumberOnly?.[1] ?? '';
+
+                  // print as csv
+                  csvString +=
+                    headers
+                      .map((key) => orderDetails[key as Header])
+                      .join(',') + '\n';
+                  // console.log(
+                  //   headers.map((key) => orderDetails[key as Header]).join(',') + '\n'
+                  // );
+
+                  console.log(csvString);
+                });
               });
             });
           });
